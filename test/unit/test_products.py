@@ -1,10 +1,10 @@
 import mock
 import requests
 
-from sprintly.errors import SprintlyUnauthorizedException
+from sprintly.errors import SprintlyUnauthorizedError
 from sprintly.products import Products
 
-from mocks import MockResponseUnauthorized, MockResponseValid
+from mocks import MockSprintlyResponse
 from test_helper import SprintlyTestCase
 
 
@@ -12,83 +12,88 @@ class TestProducts(SprintlyTestCase):
     def setUp(self):
         self._products = Products('products', 'api')
 
-    def test_add_products_returns_products(self):
-        self._products.add_product = lambda product: {
-                'admin': 'true',
-                'archived': False,
-                'id': 0,
-                'name': product}
-        expected_product_names = ['sprint.ly', 'sprint.py']
-        products = [p['name'] for p in
-                    self._products.add_products(expected_product_names)]
-        self.assertEqual(len(expected_product_names), len(products))
-        for product in expected_product_names:
-            self.assertIn(product, products)
+
+    def _mock_products_session(self, operation, value):
+        session_mock = mock.Mock(return_value=value)
+        session = requests.session()
+        setattr(session, operation, session_mock)
+        self._products.session = session
+
+    def test_add_product_raises_when_no_paying_account(self):
+        return_value = MockSprintlyResponse(
+                status_code=403,
+                reason='FORBIDDEN',
+                json={'code': 403, 'message': 'You do not own an account.'})
+
+        self._mock_products_session('post', return_value)
+
+        with self.assertRaises(SprintlyUnauthorizedError) as cm:
+            self._products.add_product('new-sprintly-product')
+        self.assertEqual('403 - FORBIDDEN', cm.exception.message)
+
+    def test_add_product_ok(self):
+        product_name = 'shinny-new-product'
+        return_value = MockSprintlyResponse(
+                status_code=200,
+                reason='OK',
+                json={
+                    'admin': True,
+                    'archived': False,
+                    'id': 3,
+                    'name': product_name
+                    }
+                )
+        self._mock_products_session('post', return_value)
+        self.assertDictEqual(return_value.json,
+                self._products.add_product(product_name))
 
     def test_add_products_makes_list_unique(self):
-        self._products.add_product = lambda product: {}
-        products = self._products.add_products(['one', 'one'])
-        self.assertEqual(1, len(products))
+        add = mock.Mock()
+        self._products.add_product = add
+        self._products.add_products(['one', 'one'])
+        add.assert_called_once_with('one')
 
-    def test_add_product_raises_when_unauthorized(self):
-        with mock.patch.object(requests, 'post') as mock_method:
-            mock_method.return_value = MockResponseUnauthorized
-
-            with self.assertRaises(SprintlyUnauthorizedException):
-                self._products.add_product('new-sprintly-product')
-
-            self.assertEqual(1, mock_method.call_count)
-
-    def test_update_product_raises_when_unauthorized(self):
-        with mock.patch.object(requests, 'post') as mock_method:
-            mock_method.return_value = MockResponseUnauthorized
-
-            with self.assertRaises(SprintlyUnauthorizedException):
-                self._products.update_product(1, 'sprintly',
-                        archived=True)
-
-            self.assertEqual(1, mock_method.call_count)
-
-    def test_update_product_archived_properly_converted(self):
-        with mock.patch.object(requests, 'post') as mock_method:
-            self._products.update_product(1, 'sprintly', archived=True)
-            expected = {'data': {'archived': 'y', 'name': 'sprintly'}}
-            self.assertEqual(expected, mock_method.call_args[1])
-
-    def test_delete_product_raises_when_unauthorized(self):
-        with mock.patch.object(requests, 'delete') as mock_method:
-            mock_method.return_value = MockResponseUnauthorized
-
-            with self.assertRaises(SprintlyUnauthorizedException):
-                self._products.delete_product(1)
-
-            self.assertEqual(1, mock_method.call_count)
-
-    def test_delete_product_returns_product_record(self):
-        """Based only on the documentation, the account used for these
-        tests didn't have enough privileges.
-        """
-        with mock.patch.object(requests, 'delete') as mock_method:
-            data = self._get_test_data('delete_product0.json')
-            mock_method.return_value = MockResponseValid(data)
-
-            record = self._products.delete_product(12)
-
-            self.assertTrue(record['admin'])
-            self.assertFalse(record['archived'])
-            self.assertEqual('sprintly', record['name'])
-            self.assertEqual(12, record['id'])
+    def test_get_product(self):
+        product = self._build_fake_product(222, 'whales!')
+        return_value = MockSprintlyResponse(
+                status_code=200,
+                reason='OK',
+                json=product)
+        self._mock_products_session('get', return_value)
+        self.assertDictEqual(product, self._products.get_product(222))
 
     def test_list_products(self):
-        with mock.patch.object(requests, 'get') as mock_method:
-            data = self._get_test_data('list_products0.json')
-            mock_method.return_value = MockResponseValid(data)
+        products = [self._build_fake_product(111256, 'dolphines!')]
+        return_value = MockSprintlyResponse(
+                status_code=200,
+                reason='OK',
+                json=products)
+        self._mock_products_session('get', return_value)
+        self.assertEqual(products, self._products.list_products())
 
-            products = self._products.list_products()
-            self.assertEqual(1, len(products))
+    def test_delete_product_no_paying_account(self):
+        return_value = MockSprintlyResponse(
+                status_code=403,
+                reason='FORBIDDEN',
+                json={'code': 403, 'message': 'You do not own an account.'})
+        self._mock_products_session('delete', return_value)
 
-            product = products[0]
-            expected_keys = ['id', 'name', 'admin', 'created_at',
-                    'archived', 'email']
-            for key in product:
-                self.assertIn(key, expected_keys)
+        with self.assertRaises(SprintlyUnauthorizedError) as cm:
+            self._products.delete_product(333)
+        self.assertEqual('403 - FORBIDDEN', cm.exception.message)
+
+    def test_delete_product_ok(self):
+        product_name = 'drop-this'
+        return_value = MockSprintlyResponse(
+                status_code=200,
+                reason='OK',
+                json={
+                    'admin': True,
+                    'archived': False,
+                    'id': 3,
+                    'name': product_name
+                    }
+                )
+        self._mock_products_session('delete', return_value)
+        self.assertDictEqual(return_value.json,
+                self._products.delete_product(product_name))
