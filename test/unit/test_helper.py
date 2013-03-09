@@ -1,5 +1,7 @@
 import json
+import mock
 import os
+import requests
 import unittest
 
 
@@ -23,3 +25,10 @@ class SprintlyTestCase(unittest.TestCase):
                 'id': product_id,
                 'name': product_name
                 }
+
+    def _mock_session_for(self, obj, operation, value):
+        session_mock = mock.Mock(return_value=value)
+        session = requests.session()
+        setattr(session, operation, session_mock)
+        setattr(obj, 'session', session)
+        return session_mock
