@@ -7,8 +7,10 @@ from errors import SprintlyUnauthorizedError
 
 
 class Api(object):
-    def __init__(self, user, key):
+    def __init__(self, user, key, debug=False):
         self._session = requests.session(auth=HTTPBasicAuth(user, key))
+        if debug:
+            self.session.config.update({'verbose': sys.stderr})
 
     @property
     def session(self):
@@ -21,12 +23,13 @@ class Api(object):
     def _format_or_raise(self, response):
         # HTTP Unauthorized or HTTP Forbidden
         if response.status_code in (401, 403):
-            raise SprintlyUnauthorizedError(response.status_code,
+            raise SprintlyUnauthorizedError(
+                    response.status_code,
                     response.reason)
         return response.json
 
-    def _make_get_request(self, url):
-        response = self._session.get(url, config={'verbose': sys.stderr})
+    def _make_get_request(self, url, params=None):
+        response = self._session.get(url, params=params)
         return self._format_or_raise(response)
 
     def _make_post_request(self, url, data):
